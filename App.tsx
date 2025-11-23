@@ -17,6 +17,13 @@ import CameraScreen from './src/Create/Camera';
 import UploadScreen from './src/Create/Upload';
 import AIGenerateScreen from './src/Create/AIGenerate';
 import TemplatesScreen from './src/Create/Templates';
+import NearbyFriends from './src/NearBy_Friends/NearbyFriends';
+
+// Additional screens
+import SearchScreen from './src/SearchScreen';
+import Notification from './src/notifycation/notifycation';
+import Admin from './src/notifycation/Admin';
+import PersonalNotifications from './src/notifycation/PersonalNotifications';
 
 // Context
 import { UserProvider, useUser } from './src/context/UserContext';
@@ -85,7 +92,14 @@ const AppNavigator = () => {
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {user ? (
-          <Stack.Screen name="Main" component={MainTabs} />
+          <>
+            <Stack.Screen name="Main" component={MainTabs} />
+            <Stack.Screen name="Search" component={SearchScreen} />
+            <Stack.Screen name="Notifications" component={Notification} />
+            <Stack.Screen name="PersonalNotifications" component={PersonalNotifications} />
+            <Stack.Screen name="AdminNotifications" component={Admin} />
+            <Stack.Screen name="NearbyFriends" component={NearbyFriends} />
+          </>
         ) : (
           <>
             <Stack.Screen name="Login" component={LoginScreen} />
@@ -108,12 +122,11 @@ const App = () => {
 export default App;
 
 
-// import React, { useEffect, useState } from 'react';
+// // App.js - COMPLETELY REPLACE THIS FILE
+// import React from 'react';
 // import { NavigationContainer } from '@react-navigation/native';
 // import { createStackNavigator } from '@react-navigation/stack';
 // import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-// import { getAuth, onAuthStateChanged } from '@react-native-firebase/auth';
-// import AsyncStorage from '@react-native-async-storage/async-storage';
 // import Icon from 'react-native-vector-icons/FontAwesome5';
 
 // // Screens
@@ -129,12 +142,13 @@ export default App;
 // import AIGenerateScreen from './src/Create/AIGenerate';
 // import TemplatesScreen from './src/Create/Templates';
 
+// import NearbyFriends from './src/NearBy_Friends/NearbyFriends'
+
 // // Context
-// import { UserProvider } from './src/context/UserContext';
+// import { UserProvider, useUser } from './src/context/UserContext';
 
 // // Theme & Config
 // import { theme } from './styles/theme';
-// import API_URL from './src/utiliti/config';
 
 // const Stack = createStackNavigator();
 // const Tab = createBottomTabNavigator();
@@ -142,25 +156,7 @@ export default App;
 
 // // Nested Create stack
 // const CreateStackScreen = () => (
-//   <CreateStack.Navigator
-//     screenOptions={{
-//       headerShown: false,
-//       cardStyle: { backgroundColor: '#0f2027' },
-//       cardStyleInterpolator: ({ current }) => ({
-//         cardStyle: {
-//           opacity: current.progress.interpolate({
-//             inputRange: [0, 1],
-//             outputRange: [0, 1],
-//             extrapolate: 'clamp',
-//           }),
-//         },
-//         transitionSpec: {
-//           open: { animation: 'timing', config: { duration: 300 } },
-//           close: { animation: 'timing', config: { duration: 300 } },
-//         },
-//       }),
-//     }}
-//   >
+//   <CreateStack.Navigator screenOptions={{ headerShown: false }}>
 //     <CreateStack.Screen name="CreateMain" component={CreateScreen} />
 //     <CreateStack.Screen name="Camera" component={CameraScreen} />
 //     <CreateStack.Screen name="Upload" component={UploadScreen} />
@@ -168,6 +164,9 @@ export default App;
 //     <CreateStack.Screen name="Templates" component={TemplatesScreen} />
 //   </CreateStack.Navigator>
 // );
+
+
+
 
 // // Bottom tab navigator
 // const MainTabs = () => (
@@ -191,7 +190,7 @@ export default App;
 //         borderTopColor: 'rgba(255, 255, 255, 0.1)',
 //         paddingVertical: 12,
 //       },
-//       tabBarLabelStyle: { fontSize: 12, fontFamily: 'Segoe UI' },
+//       tabBarLabelStyle: { fontSize: 12 },
 //       headerShown: false,
 //     })}
 //   >
@@ -200,160 +199,39 @@ export default App;
 //     <Tab.Screen name="Create" component={CreateStackScreen} />
 //     <Tab.Screen name="Chat" component={ChatScreen} />
 //     <Tab.Screen name="Profile" component={ProfileScreen} />
+
+//         <Tab.Screen name='NearbyFriends' component={NearbyFriends}/>
 //   </Tab.Navigator>
 // );
 
-// const App: React.FC = () => {
-//   const [initializing, setInitializing] = useState(true);
-//   const [user, setUser] = useState<any>(null);
-//   const [isAuthenticated, setIsAuthenticated] = useState(false);
+// // Main App Navigator
+// const AppNavigator = () => {
+//   const { user, loading } = useUser();
 
-//   useEffect(() => {
-//     const checkAuthentication = async () => {
-//       try {
-//         const auth = getAuth();
-//         const currentUser = auth.currentUser;
-
-//         const token = await AsyncStorage.getItem('authToken');
-//         const userInfo = await AsyncStorage.getItem('userInfo');
-
-//         if (currentUser) {
-//           console.log('Firebase user found:', currentUser.email);
-//           setUser(currentUser);
-
-//           if (!token && currentUser.email) {
-//             try {
-//               const idToken = await currentUser.getIdToken();
-//               const response = await fetch(`${API_URL}/api/auth/google-signin`, {
-//                 method: 'POST',
-//                 headers: { 'Content-Type': 'application/json' },
-//                 body: JSON.stringify({
-//                   email: currentUser.email,
-//                   name: currentUser.displayName,
-//                   idToken: idToken,
-//                 }),
-//               });
-
-//               if (response.ok) {
-//                 const data = await response.json();
-//                 await AsyncStorage.setItem('authToken', data.token);
-//                 await AsyncStorage.setItem(
-//                   'userInfo',
-//                   JSON.stringify({
-//                     email: data.user.email,
-//                     name: data.user.name,
-//                     phone: data.user.phone,
-//                     registrationComplete: data.user.registrationComplete,
-//                   })
-//                 );
-//               }
-//             } catch (error) {
-//               console.error('Error getting backend token from Firebase user:', error);
-//             }
-//           }
-
-//           setIsAuthenticated(true);
-//         } else if (token) {
-//           try {
-//             const response = await fetch(`${API_URL}/api/auth/profile`, {
-//               method: 'GET',
-//               headers: {
-//                 'Content-Type': 'application/json',
-//                 Authorization: `Bearer ${token}`,
-//               },
-//             });
-
-//             if (response.ok) {
-//               setIsAuthenticated(true);
-//               if (userInfo) {
-//                 try {
-//                   setUser(JSON.parse(userInfo));
-//                 } catch (e) {
-//                   console.error('Error parsing userInfo:', e);
-//                   setUser({ email: 'Backend User' });
-//                 }
-//               } else {
-//                 setUser({ email: 'Backend User' });
-//               }
-//             } else {
-//               await AsyncStorage.removeItem('authToken');
-//               await AsyncStorage.removeItem('userInfo');
-//               setIsAuthenticated(false);
-//               setUser(null);
-//             }
-//           } catch (error) {
-//             console.error('Error validating backend token:', error);
-//             await AsyncStorage.removeItem('authToken');
-//             await AsyncStorage.removeItem('userInfo');
-//             setIsAuthenticated(false);
-//             setUser(null);
-//           }
-//         } else {
-//           setIsAuthenticated(false);
-//           setUser(null);
-//         }
-//       } catch (error) {
-//         console.error('Error checking authentication state:', error);
-//         setIsAuthenticated(false);
-//         setUser(null);
-//       } finally {
-//         setInitializing(false);
-//       }
-//     };
-
-//     const auth = getAuth();
-//     const authUnsubscribe = onAuthStateChanged(auth, () => {
-//       checkAuthentication();
-//     });
-
-//     checkAuthentication();
-
-//     return () => authUnsubscribe();
-//   }, []);
-
-//   if (initializing) {
-//     return null; // You can show a loader/spinner here
+//   if (loading) {
+//     return null; // You can show a splash screen here
 //   }
 
 //   return (
+//     <NavigationContainer>
+//       <Stack.Navigator screenOptions={{ headerShown: false }}>
+//         {user ? (
+//           <Stack.Screen name="Main" component={MainTabs} />
+//         ) : (
+//           <>
+//             <Stack.Screen name="Login" component={LoginScreen} />
+//             <Stack.Screen name="Register" component={RegisterScreen} />
+//           </>
+//         )}
+//       </Stack.Navigator>
+//     </NavigationContainer>
+//   );
+// };
+
+// const App = () => {
+//   return (
 //     <UserProvider>
-//       <NavigationContainer>
-//         <Stack.Navigator
-//           initialRouteName={isAuthenticated ? 'Main' : 'Login'}
-//           screenOptions={{
-//             cardStyle: { backgroundColor: '#0f2027' },
-//             cardStyleInterpolator: ({ current }) => ({
-//               cardStyle: {
-//                 opacity: current.progress.interpolate({
-//                   inputRange: [0, 1],
-//                   outputRange: [0, 1],
-//                   extrapolate: 'clamp',
-//                 }),
-//               },
-//               transitionSpec: {
-//                 open: { animation: 'timing', config: { duration: 300 } },
-//                 close: { animation: 'timing', config: { duration: 300 } },
-//               },
-//             }),
-//           }}
-//         >
-//           <Stack.Screen
-//             name="Main"
-//             component={MainTabs}
-//             options={{ headerShown: false }}
-//           />
-//           <Stack.Screen
-//             name="Login"
-//             component={LoginScreen}
-//             options={{ headerShown: false }}
-//           />
-//           <Stack.Screen
-//             name="Register"
-//             component={RegisterScreen}
-//             options={{ headerShown: false }}
-//           />
-//         </Stack.Navigator>
-//       </NavigationContainer>
+//       <AppNavigator />
 //     </UserProvider>
 //   );
 // };
