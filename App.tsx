@@ -23,7 +23,7 @@ import NearbyFriends from './src/NearBy_Friends/NearbyFriends';
 import SearchScreen from './src/SearchScreen';
 import Notification from './src/notifycation/notifycation';
 import Admin from './src/notifycation/Admin';
-import PersonalNotifications from './src/notifycation/PersonalNotifications';
+//    import PersonalNotifications from './src/notifycation/PersonalNotifications';
 
 // Context
 import { UserProvider, useUser } from './src/context/UserContext';
@@ -96,7 +96,7 @@ const AppNavigator = () => {
             <Stack.Screen name="Main" component={MainTabs} />
             <Stack.Screen name="Search" component={SearchScreen} />
             <Stack.Screen name="Notifications" component={Notification} />
-            <Stack.Screen name="PersonalNotifications" component={PersonalNotifications} />
+           {/* <Stack.Screen name="PersonalNotifications" component={PersonalNotifications} /> */}
             <Stack.Screen name="AdminNotifications" component={Admin} />
             <Stack.Screen name="NearbyFriends" component={NearbyFriends} />
           </>
