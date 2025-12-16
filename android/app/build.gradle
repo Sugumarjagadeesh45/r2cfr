@@ -20,6 +20,34 @@ android {
     compileSdk rootProject.ext.compileSdkVersion
 
     namespace "com.sugumarjagadeesh45.reals2chat"
+
+
+
+
+
+
+
+
+
+
+
+
+
+// defaultConfig {
+//     applicationId "com.sugumarjagadeesh45.reals2chat"
+//     minSdkVersion rootProject.ext.minSdkVersion
+//     targetSdkVersion rootProject.ext.targetSdkVersion
+//     versionCode 1
+//     versionName "1.0"
+
+//     ndk {
+//         // For development: include both 32-bit and 64-bit
+//         abiFilters "armeabi-v7a", "arm64-v8a"
+//     }
+// }
+
+
+
     defaultConfig {
         applicationId "com.sugumarjagadeesh45.reals2chat"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -31,6 +59,13 @@ android {
             abiFilters "armeabi-v7a" // Fast builds in dev; re-enable others for production
         }
     }
+
+
+
+
+
+
+    
 
     signingConfigs {
         debug {

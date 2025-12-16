@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   View, 
   Text, 
@@ -9,13 +9,14 @@ import {
   FlatList,
   ScrollView,
   Alert,
-  ActivityIndicator
+  ActivityIndicator,
+  RefreshControl
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { theme } from '../styles/theme';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import API_URL from './utiliti/config';
 
@@ -25,21 +26,22 @@ const FriendsScreen = () => {
   // State variables
   const [friends, setFriends] = useState([]);
   const [addFriends, setAddFriends] = useState([]);
+  const [pendingRequests, setPendingRequests] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [apiError, setApiError] = useState(false);
+  const [activeTab, setActiveTab] = useState('friends'); // 'friends', 'suggestions', 'requests'
 
-  // --- Data Fetching Logic ---
-  useEffect(() => {
-    fetchFriendsData();
-  }, []);
-
-  const fetchFriendsData = async () => {
-    setLoading(true);
+  // Refresh data function
+  const fetchFriendsData = useCallback(async () => {
+    setRefreshing(true);
     setApiError(false);
+    
     try {
       const token = await AsyncStorage.getItem('authToken');
       if (!token) {
         console.warn('No authentication token found.');
+        setRefreshing(false);
         setLoading(false);
         return;
       }
@@ -51,50 +53,78 @@ const FriendsScreen = () => {
 
       // Fetch friends
       try {
-        const friendsResponse = await fetch(`${API_URL}/api/friends`, { method: 'GET', headers });
+        const friendsResponse = await fetch(`${API_URL}/api/friends`, { 
+          method: 'GET', 
+          headers 
+        });
         
         if (friendsResponse.ok) {
           const friendsData = await friendsResponse.json();
           setFriends(friendsData.friends || []);
-        } else if (friendsResponse.status === 404) {
-          console.log('Friends endpoint not found (404)');
-          // Set empty friends array and continue
-          setFriends([]);
         } else {
           console.error('Failed to fetch friends:', friendsResponse.status);
+          setFriends([]);
         }
       } catch (error) {
         console.error('Error fetching friends:', error);
-        setApiError(true);
       }
-      
+
       // Fetch friend suggestions
       try {
-        const suggestionsResponse = await fetch(`${API_URL}/api/friends/suggestions`, { method: 'GET', headers });
+        const suggestionsResponse = await fetch(`${API_URL}/api/friends/suggestions`, { 
+          method: 'GET', 
+          headers 
+        });
         
         if (suggestionsResponse.ok) {
           const suggestionsData = await suggestionsResponse.json();
           setAddFriends(suggestionsData.suggestions || []);
-        } else if (suggestionsResponse.status === 404) {
-          console.log('Friend suggestions endpoint not found (404)');
-          // Set empty suggestions array and continue
-          setAddFriends([]);
         } else {
           console.error('Failed to fetch suggestions:', suggestionsResponse.status);
+          setAddFriends([]);
         }
       } catch (error) {
         console.error('Error fetching suggestions:', error);
-        setApiError(true);
+      }
+
+      // Fetch pending friend requests
+      try {
+        const requestsResponse = await fetch(`${API_URL}/api/friends/requests/pending`, { 
+          method: 'GET', 
+          headers 
+        });
+        
+        if (requestsResponse.ok) {
+          const requestsData = await requestsResponse.json();
+          setPendingRequests(requestsData.requests || []);
+        } else {
+          console.error('Failed to fetch requests:', requestsResponse.status);
+          setPendingRequests([]);
+        }
+      } catch (error) {
+        console.error('Error fetching requests:', error);
       }
 
     } catch (error) {
       console.error('Error fetching friends data:', error);
-      Alert.alert('Network Error', 'Could not connect to the server.');
       setApiError(true);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, []);
+
+  // Initial load
+  useEffect(() => {
+    fetchFriendsData();
+  }, [fetchFriendsData]);
+
+  // Refresh when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      fetchFriendsData();
+    }, [fetchFriendsData])
+  );
 
   // --- Action Handlers ---
   const handleNearbyFriendsPress = () => {
@@ -108,6 +138,7 @@ const FriendsScreen = () => {
         Alert.alert('Error', 'Not authenticated.');
         return;
       }
+
       const response = await fetch(`${API_URL}/api/friends/request`, {
         method: 'POST',
         headers: {
@@ -116,12 +147,19 @@ const FriendsScreen = () => {
         },
         body: JSON.stringify({
           toUserId: user.id,
+          message: `Hi ${user.name}, I'd like to connect with you on Reels2Chat!`
         }),
       });
 
       if (response.ok) {
         Alert.alert('Success', `Friend request sent to ${user.name}`);
-        setAddFriends(addFriends.filter(friend => friend.id !== user.id));
+        
+        // Update the UI immediately
+        setAddFriends(prev => prev.map(friend => 
+          friend.id === user.id 
+            ? { ...friend, requestStatus: 'request_sent' }
+            : friend
+        ));
       } else {
         const errorData = await response.json();
         Alert.alert('Error', errorData.message || 'Failed to send friend request');
@@ -132,31 +170,186 @@ const FriendsScreen = () => {
     }
   };
 
+  const handleAcceptRequest = async (requestId, userName) => {
+    try {
+      const token = await AsyncStorage.getItem('authToken');
+      if (!token) {
+        Alert.alert('Error', 'Not authenticated.');
+        return;
+      }
+
+      const response = await fetch(`${API_URL}/api/friends/requests/${requestId}/accept`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        Alert.alert('Success', `Accepted friend request from ${userName}`);
+        
+        // Update the UI
+        setPendingRequests(prev => prev.filter(req => req.id !== requestId));
+        fetchFriendsData(); // Refresh friends list
+      } else {
+        const errorData = await response.json();
+        Alert.alert('Error', errorData.message || 'Failed to accept friend request');
+      }
+    } catch (error) {
+      console.error('Error accepting friend request:', error);
+      Alert.alert('Error', 'Network error. Please try again.');
+    }
+  };
+
+  const handleRejectRequest = async (requestId, userName) => {
+    try {
+      const token = await AsyncStorage.getItem('authToken');
+      if (!token) {
+        Alert.alert('Error', 'Not authenticated.');
+        return;
+      }
+
+      const response = await fetch(`${API_URL}/api/friends/requests/${requestId}/reject`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        Alert.alert('Success', `Rejected friend request from ${userName}`);
+        
+        // Update the UI
+        setPendingRequests(prev => prev.filter(req => req.id !== requestId));
+      } else {
+        const errorData = await response.json();
+        Alert.alert('Error', errorData.message || 'Failed to reject friend request');
+      }
+    } catch (error) {
+      console.error('Error rejecting friend request:', error);
+      Alert.alert('Error', 'Network error. Please try again.');
+    }
+  };
+
   const handleChat = (user) => {
-    navigation.navigate('Chat' as never, { userId: user.id, userName: user.name });
+    navigation.navigate('Chat' as never, { 
+      userId: user.id, 
+      userName: user.name,
+      userAvatar: user.avatar 
+    });
+  };
+
+  const handleViewProfile = (user) => {
+    navigation.navigate('ProfileView', { 
+      userId: user.id,
+      userName: user.name 
+    });
   };
 
   // --- Render Functions ---
   const renderFriend = ({ item }) => (
     <View style={styles.friendItem}>
-      <Image source={{ uri: item.avatar || 'https://randomuser.me/api/portraits/men/32.jpg' }} style={styles.friendAvatar} />
+      <TouchableOpacity onPress={() => handleViewProfile(item)}>
+        <Image 
+          source={{ uri: item.avatar || item.photoURL || 'https://randomuser.me/api/portraits/men/32.jpg' }} 
+          style={styles.friendAvatar} 
+        />
+      </TouchableOpacity>
       <View style={styles.friendInfo}>
-        <Text style={styles.friendName}>{item.name}</Text>
-        <Text style={styles.friendStatus}>{item.status}</Text>
+        <TouchableOpacity onPress={() => handleViewProfile(item)}>
+          <Text style={styles.friendName}>{item.name}</Text>
+          <Text style={styles.friendStatus}>{item.status || 'Friend'}</Text>
+        </TouchableOpacity>
       </View>
       <TouchableOpacity 
         style={styles.friendChatBtn}
-        onPress={() => item.status && item.status.includes('mutual') ? handleAddFriend(item) : handleChat(item)}
+        onPress={() => handleChat(item)}
       >
-        <Text style={styles.friendChatBtnText}>
-          {item.status && item.status.includes('mutual') ? 'Add' : 'Chat'}
-        </Text>
+        <Icon name="chat" size={16} color="#fff" />
+        <Text style={styles.friendChatBtnText}>Chat</Text>
       </TouchableOpacity>
     </View>
   );
 
+  const renderSuggestion = ({ item }) => (
+    <View style={styles.friendItem}>
+      <TouchableOpacity onPress={() => handleViewProfile(item)}>
+        <Image 
+          source={{ uri: item.avatar || 'https://randomuser.me/api/portraits/men/32.jpg' }} 
+          style={styles.friendAvatar} 
+        />
+      </TouchableOpacity>
+      <View style={styles.friendInfo}>
+        <TouchableOpacity onPress={() => handleViewProfile(item)}>
+          <Text style={styles.friendName}>{item.name}</Text>
+          <Text style={styles.friendStatus}>{item.status || 'Suggested'}</Text>
+        </TouchableOpacity>
+      </View>
+      {item.requestStatus === 'add_friend' ? (
+        <TouchableOpacity 
+          style={styles.addFriendBtn}
+          onPress={() => handleAddFriend(item)}
+        >
+          <Icon name="person-add" size={16} color="#fff" />
+          <Text style={styles.addFriendBtnText}>Add</Text>
+        </TouchableOpacity>
+      ) : item.requestStatus === 'request_sent' ? (
+        <View style={styles.requestSentBtn}>
+          <Icon name="schedule" size={16} color={theme.textSecondary} />
+          <Text style={styles.requestSentText}>Sent</Text>
+        </View>
+      ) : (
+        <TouchableOpacity 
+          style={styles.pendingRequestBtn}
+          onPress={() => navigation.navigate('FriendRequests' as never)}
+        >
+          <Icon name="notifications" size={16} color="#fff" />
+          <Text style={styles.pendingRequestText}>View</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+
+  const renderRequest = ({ item }) => (
+    <View style={styles.requestItem}>
+      <TouchableOpacity onPress={() => handleViewProfile(item.fromUser)}>
+        <Image 
+          source={{ uri: item.fromUser.avatar || 'https://randomuser.me/api/portraits/men/32.jpg' }} 
+          style={styles.friendAvatar} 
+        />
+      </TouchableOpacity>
+      <View style={styles.requestInfo}>
+        <TouchableOpacity onPress={() => handleViewProfile(item.fromUser)}>
+          <Text style={styles.friendName}>{item.fromUser.name}</Text>
+          <Text style={styles.friendStatus}>
+            {item.fromUser.bio ? item.fromUser.bio.substring(0, 50) + '...' : 'Wants to connect with you'}
+          </Text>
+          {item.message && (
+            <Text style={styles.requestMessage}>"{item.message}"</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+      <View style={styles.requestActions}>
+        <TouchableOpacity 
+          style={styles.acceptBtn}
+          onPress={() => handleAcceptRequest(item.id, item.fromUser.name)}
+        >
+          <Icon name="check" size={18} color="#fff" />
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={styles.rejectBtn}
+          onPress={() => handleRejectRequest(item.id, item.fromUser.name)}
+        >
+          <Icon name="close" size={18} color="#fff" />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   // --- Loading State UI ---
-  if (loading) {
+  if (loading && !refreshing) {
     return (
       <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar barStyle="light-content" backgroundColor={theme.headerBg} />
@@ -182,13 +375,80 @@ const FriendsScreen = () => {
               <Text style={styles.logo}>REELS2CHAT</Text>
             </View>
             <View style={styles.headerIcons}>
-              <TouchableOpacity style={styles.headerIcon} onPress={() => navigation.navigate('Search')}>
+              <TouchableOpacity 
+                style={styles.headerIcon} 
+                onPress={() => navigation.navigate('Search')}
+              >
                 <Icon name="search" size={18} color={theme.textPrimary} />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.headerIcon} onPress={() => navigation.navigate('Notifications')}>
+              <TouchableOpacity 
+                style={styles.headerIcon} 
+                onPress={() => navigation.navigate('FriendRequests')}
+              >
                 <Icon name="mail" size={18} color={theme.textPrimary} />
+                {pendingRequests.length > 0 && (
+                  <View style={styles.notificationBadge}>
+                    <Text style={styles.notificationCount}>
+                      {pendingRequests.length > 9 ? '9+' : pendingRequests.length}
+                    </Text>
+                  </View>
+                )}
               </TouchableOpacity>
             </View>
+          </View>
+
+          {/* Tabs */}
+          <View style={styles.tabsContainer}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <TouchableOpacity 
+                style={[styles.tab, activeTab === 'friends' && styles.activeTab]}
+                onPress={() => setActiveTab('friends')}
+              >
+                <Icon 
+                  name="people" 
+                  size={16} 
+                  color={activeTab === 'friends' ? theme.accentColor : theme.textSecondary} 
+                />
+                <Text style={[styles.tabText, activeTab === 'friends' && styles.activeTabText]}>
+                  Friends ({friends.length})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={[styles.tab, activeTab === 'suggestions' && styles.activeTab]}
+                onPress={() => setActiveTab('suggestions')}
+              >
+                <Icon 
+                  name="person-add" 
+                  size={16} 
+                  color={activeTab === 'suggestions' ? theme.accentColor : theme.textSecondary} 
+                />
+                <Text style={[styles.tabText, activeTab === 'suggestions' && styles.activeTabText]}>
+                  Suggestions ({addFriends.length})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={[styles.tab, activeTab === 'requests' && styles.activeTab]}
+                onPress={() => setActiveTab('requests')}
+              >
+                <Icon 
+                  name="mail" 
+                  size={16} 
+                  color={activeTab === 'requests' ? theme.accentColor : theme.textSecondary} 
+                />
+                <Text style={[styles.tabText, activeTab === 'requests' && styles.activeTabText]}>
+                  Requests ({pendingRequests.length})
+                </Text>
+                {pendingRequests.length > 0 && (
+                  <View style={styles.tabBadge}>
+                    <Text style={styles.tabBadgeText}>
+                      {pendingRequests.length > 9 ? '9+' : pendingRequests.length}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
           </View>
 
           <View style={styles.content}>
@@ -196,6 +456,14 @@ const FriendsScreen = () => {
               style={styles.scrollView}
               contentContainerStyle={styles.scrollViewContent}
               showsVerticalScrollIndicator={false}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={fetchFriendsData}
+                  colors={[theme.accentColor]}
+                  tintColor={theme.accentColor}
+                />
+              }
             >
               {/* API Error Message */}
               {apiError && (
@@ -208,57 +476,103 @@ const FriendsScreen = () => {
                 </View>
               )}
 
-              {/* Friends Section */}
-              <View style={styles.sectionContainer}>
-                <View style={styles.sectionHeader}>
-                  <View style={styles.sectionTitle}>
-                    <Icon name="people" size={16} color={theme.accentColor} style={styles.sectionTitleIcon} />
-                    <Text style={styles.sectionTitleText}>Friends</Text>
+              {/* Friends Tab Content */}
+              {activeTab === 'friends' && (
+                <View style={styles.sectionContainer}>
+                  <View style={styles.sectionHeader}>
+                    <View style={styles.sectionTitle}>
+                      <Icon name="people" size={16} color={theme.accentColor} style={styles.sectionTitleIcon} />
+                      <Text style={styles.sectionTitleText}>My Friends</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => navigation.navigate('AllFriends' as never)}>
+                      <Text style={styles.seeAllText}>See All</Text>
+                    </TouchableOpacity>
                   </View>
-                  <TouchableOpacity>
-                    <Text style={styles.seeAllText}>See All</Text>
-                  </TouchableOpacity>
+                  <FlatList
+                    data={friends}
+                    renderItem={renderFriend}
+                    keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
+                    scrollEnabled={false}
+                    style={styles.friendsList}
+                    ListEmptyComponent={() => (
+                      <View style={styles.emptyContainer}>
+                        <Icon name="people-outline" size={48} color={theme.textSecondary} />
+                        <Text style={styles.emptyListText}>
+                          {apiError ? "Unable to load friends" : "No friends yet. Start adding some!"}
+                        </Text>
+                        <TouchableOpacity 
+                          style={styles.emptyActionBtn}
+                          onPress={() => setActiveTab('suggestions')}
+                        >
+                          <Text style={styles.emptyActionText}>Find Friends</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  />
                 </View>
-                <FlatList
-                  data={friends}
-                  renderItem={renderFriend}
-                  keyExtractor={(item) => item.id.toString()}
-                  scrollEnabled={false}
-                  style={styles.friendsList}
-                  ListEmptyComponent={() => (
-                    <Text style={styles.emptyListText}>
-                      {apiError ? "Unable to load friends" : "No friends yet."}
-                    </Text>
-                  )}
-                />
-              </View>
+              )}
 
-              {/* Add Friend Section */}
-              <View style={styles.sectionContainer}>
-                <View style={styles.sectionHeader}>
-                  <View style={styles.sectionTitle}>
-                    <Icon name="person-add" size={16} color={theme.accentColor} style={styles.sectionTitleIcon} />
-                    <Text style={styles.sectionTitleText}>Add Friend</Text>
+              {/* Suggestions Tab Content */}
+              {activeTab === 'suggestions' && (
+                <View style={styles.sectionContainer}>
+                  <View style={styles.sectionHeader}>
+                    <View style={styles.sectionTitle}>
+                      <Icon name="person-add" size={16} color={theme.accentColor} style={styles.sectionTitleIcon} />
+                      <Text style={styles.sectionTitleText}>People You May Know</Text>
+                    </View>
+                    <Text style={styles.suggestionSubtitle}>Based on your birth year</Text>
                   </View>
-                  <TouchableOpacity>
-                    <Text style={styles.seeAllText}>See All</Text>
-                  </TouchableOpacity>
+                  <FlatList
+                    data={addFriends}
+                    renderItem={renderSuggestion}
+                    keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
+                    scrollEnabled={false}
+                    style={styles.friendsList}
+                    ListEmptyComponent={() => (
+                      <View style={styles.emptyContainer}>
+                        <Icon name="person-search" size={48} color={theme.textSecondary} />
+                        <Text style={styles.emptyListText}>
+                          {apiError ? "Unable to load suggestions" : "No suggestions right now."}
+                        </Text>
+                        <Text style={styles.emptySubtext}>Complete your profile to get better suggestions.</Text>
+                      </View>
+                    )}
+                  />
                 </View>
-                <FlatList
-                  data={addFriends}
-                  renderItem={renderFriend}
-                  keyExtractor={(item) => item.id.toString()}
-                  scrollEnabled={false}
-                  style={styles.friendsList}
-                  ListEmptyComponent={() => (
-                    <Text style={styles.emptyListText}>
-                      {apiError ? "Unable to load suggestions" : "No suggestions right now."}
-                    </Text>
-                  )}
-                />
-              </View>
+              )}
 
-              {/* Nearby Friends Button */}
+              {/* Requests Tab Content */}
+              {activeTab === 'requests' && (
+                <View style={styles.sectionContainer}>
+                  <View style={styles.sectionHeader}>
+                    <View style={styles.sectionTitle}>
+                      <Icon name="mail" size={16} color={theme.accentColor} style={styles.sectionTitleIcon} />
+                      <Text style={styles.sectionTitleText}>Friend Requests</Text>
+                    </View>
+                    {pendingRequests.length > 0 && (
+                      <TouchableOpacity onPress={() => navigation.navigate('AllRequests' as never)}>
+                        <Text style={styles.seeAllText}>See All</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <FlatList
+                    data={pendingRequests}
+                    renderItem={renderRequest}
+                    keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
+                    scrollEnabled={false}
+                    style={styles.friendsList}
+                    ListEmptyComponent={() => (
+                      <View style={styles.emptyContainer}>
+                        <Icon name="mail-outline" size={48} color={theme.textSecondary} />
+                        <Text style={styles.emptyListText}>No pending friend requests</Text>
+                        <Text style={styles.emptySubtext}>When someone sends you a request, it will appear here.</Text>
+                      </View>
+                    )}
+                  />
+                </View>
+              )}
+
+              {/* Nearby Friends Button (Always visible) */}
               <View style={styles.nearbyButtonContainer}>
                 <TouchableOpacity 
                   style={styles.nearbyButton}
@@ -288,35 +602,6 @@ const FriendsScreen = () => {
 };
 
 const styles = StyleSheet.create({
-
-  errorContainer: {
-    backgroundColor: 'rgba(255, 107, 107, 0.1)',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 107, 107, 0.3)',
-  },
-  errorText: {
-    color: '#ff6b6b',
-    fontSize: 14,
-    textAlign: 'center',
-    marginTop: 8,
-    marginBottom: 12,
-  },
-  retryButton: {
-    backgroundColor: '#ff6b6b',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-  },
-  retryButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  
   container: {
     flex: 1,
     backgroundColor: theme.background,
@@ -349,7 +634,6 @@ const styles = StyleSheet.create({
   logo: {
     fontSize: 22,
     fontWeight: '700',
-    // fontFamily: 'Poppins', // Keep if Poppins is installed
     color: theme.textPrimary,
     marginLeft: 8,
   },
@@ -364,6 +648,68 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    backgroundColor: '#FF4757',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  notificationCount: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  tabsContainer: {
+    backgroundColor: 'rgba(18, 24, 38, 0.95)',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  tab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginRight: 12,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  activeTab: {
+    backgroundColor: 'rgba(255, 0, 80, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 0, 80, 0.3)',
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: theme.textSecondary,
+    marginLeft: 6,
+  },
+  activeTabText: {
+    color: theme.accentColor,
+  },
+  tabBadge: {
+    backgroundColor: '#FF4757',
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 6,
+    paddingHorizontal: 4,
+  },
+  tabBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
   },
   content: {
     flex: 1,
@@ -404,13 +750,16 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: theme.textPrimary,
-    // fontFamily: 'Poppins', // Keep if Poppins is installed
+  },
+  suggestionSubtitle: {
+    fontSize: 12,
+    color: theme.textSecondary,
+    fontStyle: 'italic',
   },
   seeAllText: {
     color: theme.accentColor,
     fontSize: 13,
     fontWeight: '600',
-    // fontFamily: 'Poppins', // Keep if Poppins is installed
   },
   friendsList: {
     marginBottom: 10,
@@ -419,6 +768,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  requestItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.06)',
@@ -432,20 +789,30 @@ const styles = StyleSheet.create({
   friendInfo: {
     flex: 1,
   },
+  requestInfo: {
+    flex: 1,
+    marginRight: 10,
+  },
   friendName: {
     fontWeight: '600',
     fontSize: 16,
     color: theme.textPrimary,
-    // fontFamily: 'Poppins', // Keep if Poppins is installed
   },
   friendStatus: {
     fontSize: 13,
     color: theme.textSecondary,
     marginTop: 3,
-    // fontFamily: 'Poppins', // Keep if Poppins is installed
+  },
+  requestMessage: {
+    fontSize: 12,
+    color: theme.accentColor,
+    marginTop: 4,
+    fontStyle: 'italic',
   },
   friendChatBtn: {
     backgroundColor: theme.accentColor,
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 20,
@@ -454,7 +821,127 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
     fontSize: 14,
-    // fontFamily: 'Poppins', // Keep if Poppins is installed
+    marginLeft: 4,
+  },
+  addFriendBtn: {
+    backgroundColor: '#4CAF50',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+  },
+  addFriendBtnText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 14,
+    marginLeft: 4,
+  },
+  requestSentBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+  },
+  requestSentText: {
+    color: theme.textSecondary,
+    fontWeight: '600',
+    fontSize: 14,
+    marginLeft: 4,
+  },
+  pendingRequestBtn: {
+    backgroundColor: '#FF9800',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+  },
+  pendingRequestText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 14,
+    marginLeft: 4,
+  },
+  requestActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  acceptBtn: {
+    backgroundColor: '#4CAF50',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  rejectBtn: {
+    backgroundColor: '#FF4757',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorContainer: {
+    backgroundColor: 'rgba(255, 107, 107, 0.1)',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 107, 107, 0.3)',
+  },
+  errorText: {
+    color: '#ff6b6b',
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  retryButton: {
+    backgroundColor: '#ff6b6b',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+  },
+  retryButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+  },
+  emptyListText: {
+    color: theme.textSecondary,
+    textAlign: 'center',
+    marginTop: 16,
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  emptySubtext: {
+    color: theme.textSecondary,
+    textAlign: 'center',
+    marginTop: 8,
+    fontSize: 14,
+    opacity: 0.7,
+  },
+  emptyActionBtn: {
+    backgroundColor: theme.accentColor,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 24,
+    marginTop: 20,
+  },
+  emptyActionText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 14,
   },
   nearbyButtonContainer: {
     marginTop: 10,
@@ -485,7 +972,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '700',
-    // fontFamily: 'Poppins', // Keep if Poppins is installed
     letterSpacing: 0.5,
   },
   vipDescription: {
@@ -506,10 +992,8 @@ const styles = StyleSheet.create({
     color: '#FFD700',
     fontSize: 12,
     fontWeight: '500',
-    // fontFamily: 'Poppins', // Keep if Poppins is installed
     textAlign: 'center',
   },
-  // --- New styles for Loading state ---
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -520,19 +1004,12 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 16,
   },
-  emptyListText: {
-    color: theme.textSecondary,
-    textAlign: 'center',
-    paddingVertical: 20,
-    fontStyle: 'italic',
-  }
 });
 
 export default FriendsScreen;
 
 
-
-// import React from 'react';
+// import React, { useState, useEffect } from 'react';
 // import { 
 //   View, 
 //   Text, 
@@ -541,55 +1018,170 @@ export default FriendsScreen;
 //   Image, 
 //   TouchableOpacity, 
 //   FlatList,
-//   ScrollView 
+//   ScrollView,
+//   Alert,
+//   ActivityIndicator
 // } from 'react-native';
 // import { SafeAreaView } from 'react-native-safe-area-context';
 // import LinearGradient from 'react-native-linear-gradient';
 // import Icon from 'react-native-vector-icons/MaterialIcons';
 // import { theme } from '../styles/theme';
 // import { useNavigation } from '@react-navigation/native';
-
-
 // import AsyncStorage from '@react-native-async-storage/async-storage';
 // import API_URL from './utiliti/config';
-
-
-// const friends = [
-//   { id: '1', name: 'Sarah Miller', status: 'Active now', avatar: 'https://randomuser.me/api/portraits/women/33.jpg' },
-//   { id: '2', name: 'Mike Johnson', status: 'Active 5m ago', avatar: 'https://randomuser.me/api/portraits/men/45.jpg' },
-//   { id: '3', name: 'Emily Davis', status: 'Active 1h ago', avatar: 'https://randomuser.me/api/portraits/women/22.jpg' },
-//   { id: '4', name: 'James Wilson', status: 'Active 3h ago', avatar: 'https://randomuser.me/api/portraits/men/32.jpg' },
-//   { id: '5', name: 'Olivia Brown', status: 'Active yesterday', avatar: 'https://randomuser.me/api/portraits/women/18.jpg' },
-// ];
-
-// const addFriends = [
-//   { id: '6', name: 'Sophia Garcia', status: '15 mutual friends', avatar: 'https://randomuser.me/api/portraits/women/67.jpg' },
-//   { id: '7', name: 'William Taylor', status: '8 mutual friends', avatar: 'https://randomuser.me/api/portraits/men/55.jpg' },
-//   { id: '8', name: 'Emma Wilson', status: '12 mutual friends', avatar: 'https://randomuser.me/api/portraits/women/44.jpg' },
-//   { id: '9', name: 'Daniel Lee', status: '6 mutual friends', avatar: 'https://randomuser.me/api/portraits/men/68.jpg' },
-//   { id: '10', name: 'Sophie Martin', status: '9 mutual friends', avatar: 'https://randomuser.me/api/portraits/women/55.jpg' },
-// ];
 
 // const FriendsScreen = () => {
 //   const navigation = useNavigation();
 
-//   const handleNearbyFriendsPress = () => {
-//     navigation.navigate('NearbyFriends' as never);
+//   // State variables
+//   const [friends, setFriends] = useState([]);
+//   const [addFriends, setAddFriends] = useState([]);
+//   const [loading, setLoading] = useState(true);
+//   const [apiError, setApiError] = useState(false);
+
+//   // --- Data Fetching Logic ---
+//   useEffect(() => {
+//     fetchFriendsData();
+//   }, []);
+
+//   const fetchFriendsData = async () => {
+//     setLoading(true);
+//     setApiError(false);
+//     try {
+//       const token = await AsyncStorage.getItem('authToken');
+//       if (!token) {
+//         console.warn('No authentication token found.');
+//         setLoading(false);
+//         return;
+//       }
+
+//       const headers = {
+//         'Content-Type': 'application/json',
+//         Authorization: `Bearer ${token}`,
+//       };
+
+//       // Fetch friends
+//       try {
+//         const friendsResponse = await fetch(`${API_URL}/api/friends`, { method: 'GET', headers });
+        
+//         if (friendsResponse.ok) {
+//           const friendsData = await friendsResponse.json();
+//           setFriends(friendsData.friends || []);
+//         } else if (friendsResponse.status === 404) {
+//           console.log('Friends endpoint not found (404)');
+//           // Set empty friends array and continue
+//           setFriends([]);
+//         } else {
+//           console.error('Failed to fetch friends:', friendsResponse.status);
+//         }
+//       } catch (error) {
+//         console.error('Error fetching friends:', error);
+//         setApiError(true);
+//       }
+      
+//       // Fetch friend suggestions
+//       try {
+//         const suggestionsResponse = await fetch(`${API_URL}/api/friends/suggestions`, { method: 'GET', headers });
+        
+//         if (suggestionsResponse.ok) {
+//           const suggestionsData = await suggestionsResponse.json();
+//           setAddFriends(suggestionsData.suggestions || []);
+//         } else if (suggestionsResponse.status === 404) {
+//           console.log('Friend suggestions endpoint not found (404)');
+//           // Set empty suggestions array and continue
+//           setAddFriends([]);
+//         } else {
+//           console.error('Failed to fetch suggestions:', suggestionsResponse.status);
+//         }
+//       } catch (error) {
+//         console.error('Error fetching suggestions:', error);
+//         setApiError(true);
+//       }
+
+//     } catch (error) {
+//       console.error('Error fetching friends data:', error);
+//       Alert.alert('Network Error', 'Could not connect to the server.');
+//       setApiError(true);
+//     } finally {
+//       setLoading(false);
+//     }
 //   };
 
+//   // --- Action Handlers ---
+//   const handleNearbyFriendsPress = () => {
+//     navigation.navigate('NearbyFriends');
+//   };
+
+//   const handleAddFriend = async (user) => {
+//     try {
+//       const token = await AsyncStorage.getItem('authToken');
+//       if (!token) {
+//         Alert.alert('Error', 'Not authenticated.');
+//         return;
+//       }
+//       const response = await fetch(`${API_URL}/api/friends/request`, {
+//         method: 'POST',
+//         headers: {
+//           'Content-Type': 'application/json',
+//           Authorization: `Bearer ${token}`,
+//         },
+//         body: JSON.stringify({
+//           toUserId: user.id,
+//         }),
+//       });
+
+//       if (response.ok) {
+//         Alert.alert('Success', `Friend request sent to ${user.name}`);
+//         setAddFriends(addFriends.filter(friend => friend.id !== user.id));
+//       } else {
+//         const errorData = await response.json();
+//         Alert.alert('Error', errorData.message || 'Failed to send friend request');
+//       }
+//     } catch (error) {
+//       console.error('Error sending friend request:', error);
+//       Alert.alert('Error', 'Network error. Please try again.');
+//     }
+//   };
+
+//   const handleChat = (user) => {
+//     navigation.navigate('Chat' as never, { userId: user.id, userName: user.name });
+//   };
+
+//   // --- Render Functions ---
 //   const renderFriend = ({ item }) => (
 //     <View style={styles.friendItem}>
-//       <Image source={{ uri: item.avatar }} style={styles.friendAvatar} />
+//       <Image source={{ uri: item.avatar || 'https://randomuser.me/api/portraits/men/32.jpg' }} style={styles.friendAvatar} />
 //       <View style={styles.friendInfo}>
 //         <Text style={styles.friendName}>{item.name}</Text>
 //         <Text style={styles.friendStatus}>{item.status}</Text>
 //       </View>
-//       <TouchableOpacity style={styles.friendChatBtn}>
-//         <Text style={styles.friendChatBtnText}>{item.status.includes('mutual') ? 'Add' : 'Chat'}</Text>
+//       <TouchableOpacity 
+//         style={styles.friendChatBtn}
+//         onPress={() => item.status && item.status.includes('mutual') ? handleAddFriend(item) : handleChat(item)}
+//       >
+//         <Text style={styles.friendChatBtnText}>
+//           {item.status && item.status.includes('mutual') ? 'Add' : 'Chat'}
+//         </Text>
 //       </TouchableOpacity>
 //     </View>
 //   );
 
+//   // --- Loading State UI ---
+//   if (loading) {
+//     return (
+//       <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+//         <StatusBar barStyle="light-content" backgroundColor={theme.headerBg} />
+//         <LinearGradient colors={['#0f2027', '#203a43', '#2c5364']} style={styles.container}>
+//           <View style={styles.loadingContainer}>
+//             <ActivityIndicator size="large" color={theme.accentColor} />
+//             <Text style={styles.loadingText}>Loading friends...</Text>
+//           </View>
+//         </LinearGradient>
+//       </SafeAreaView>
+//     );
+//   }
+
+//   // --- Main Render UI ---
 //   return (
 //     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
 //       <StatusBar barStyle="light-content" backgroundColor={theme.headerBg} />
@@ -601,10 +1193,10 @@ export default FriendsScreen;
 //               <Text style={styles.logo}>REELS2CHAT</Text>
 //             </View>
 //             <View style={styles.headerIcons}>
-//               <TouchableOpacity style={styles.headerIcon}>
+//               <TouchableOpacity style={styles.headerIcon} onPress={() => navigation.navigate('Search')}>
 //                 <Icon name="search" size={18} color={theme.textPrimary} />
 //               </TouchableOpacity>
-//               <TouchableOpacity style={styles.headerIcon}>
+//               <TouchableOpacity style={styles.headerIcon} onPress={() => navigation.navigate('Notifications')}>
 //                 <Icon name="mail" size={18} color={theme.textPrimary} />
 //               </TouchableOpacity>
 //             </View>
@@ -616,6 +1208,18 @@ export default FriendsScreen;
 //               contentContainerStyle={styles.scrollViewContent}
 //               showsVerticalScrollIndicator={false}
 //             >
+//               {/* API Error Message */}
+//               {apiError && (
+//                 <View style={styles.errorContainer}>
+//                   <Icon name="error-outline" size={24} color="#ff6b6b" />
+//                   <Text style={styles.errorText}>Some features may not be available due to server issues.</Text>
+//                   <TouchableOpacity style={styles.retryButton} onPress={fetchFriendsData}>
+//                     <Text style={styles.retryButtonText}>Retry</Text>
+//                   </TouchableOpacity>
+//                 </View>
+//               )}
+
+//               {/* Friends Section */}
 //               <View style={styles.sectionContainer}>
 //                 <View style={styles.sectionHeader}>
 //                   <View style={styles.sectionTitle}>
@@ -629,12 +1233,18 @@ export default FriendsScreen;
 //                 <FlatList
 //                   data={friends}
 //                   renderItem={renderFriend}
-//                   keyExtractor={(item) => item.id}
+//                   keyExtractor={(item) => item.id.toString()}
 //                   scrollEnabled={false}
 //                   style={styles.friendsList}
+//                   ListEmptyComponent={() => (
+//                     <Text style={styles.emptyListText}>
+//                       {apiError ? "Unable to load friends" : "No friends yet."}
+//                     </Text>
+//                   )}
 //                 />
 //               </View>
 
+//               {/* Add Friend Section */}
 //               <View style={styles.sectionContainer}>
 //                 <View style={styles.sectionHeader}>
 //                   <View style={styles.sectionTitle}>
@@ -648,13 +1258,18 @@ export default FriendsScreen;
 //                 <FlatList
 //                   data={addFriends}
 //                   renderItem={renderFriend}
-//                   keyExtractor={(item) => item.id}
+//                   keyExtractor={(item) => item.id.toString()}
 //                   scrollEnabled={false}
 //                   style={styles.friendsList}
+//                   ListEmptyComponent={() => (
+//                     <Text style={styles.emptyListText}>
+//                       {apiError ? "Unable to load suggestions" : "No suggestions right now."}
+//                     </Text>
+//                   )}
 //                 />
 //               </View>
 
-//               {/* Nearby Friends Button - Inside ScrollView at the bottom */}
+//               {/* Nearby Friends Button */}
 //               <View style={styles.nearbyButtonContainer}>
 //                 <TouchableOpacity 
 //                   style={styles.nearbyButton}
@@ -684,6 +1299,35 @@ export default FriendsScreen;
 // };
 
 // const styles = StyleSheet.create({
+
+//   errorContainer: {
+//     backgroundColor: 'rgba(255, 107, 107, 0.1)',
+//     borderRadius: 12,
+//     padding: 16,
+//     marginBottom: 20,
+//     alignItems: 'center',
+//     borderWidth: 1,
+//     borderColor: 'rgba(255, 107, 107, 0.3)',
+//   },
+//   errorText: {
+//     color: '#ff6b6b',
+//     fontSize: 14,
+//     textAlign: 'center',
+//     marginTop: 8,
+//     marginBottom: 12,
+//   },
+//   retryButton: {
+//     backgroundColor: '#ff6b6b',
+//     paddingVertical: 8,
+//     paddingHorizontal: 16,
+//     borderRadius: 20,
+//   },
+//   retryButtonText: {
+//     color: '#fff',
+//     fontWeight: '600',
+//     fontSize: 14,
+//   },
+  
 //   container: {
 //     flex: 1,
 //     backgroundColor: theme.background,
@@ -716,7 +1360,7 @@ export default FriendsScreen;
 //   logo: {
 //     fontSize: 22,
 //     fontWeight: '700',
-//     fontFamily: 'Poppins',
+//     // fontFamily: 'Poppins', // Keep if Poppins is installed
 //     color: theme.textPrimary,
 //     marginLeft: 8,
 //   },
@@ -771,13 +1415,13 @@ export default FriendsScreen;
 //     fontSize: 16,
 //     fontWeight: '700',
 //     color: theme.textPrimary,
-//     fontFamily: 'Poppins',
+//     // fontFamily: 'Poppins', // Keep if Poppins is installed
 //   },
 //   seeAllText: {
 //     color: theme.accentColor,
 //     fontSize: 13,
 //     fontWeight: '600',
-//     fontFamily: 'Poppins',
+//     // fontFamily: 'Poppins', // Keep if Poppins is installed
 //   },
 //   friendsList: {
 //     marginBottom: 10,
@@ -803,13 +1447,13 @@ export default FriendsScreen;
 //     fontWeight: '600',
 //     fontSize: 16,
 //     color: theme.textPrimary,
-//     fontFamily: 'Poppins',
+//     // fontFamily: 'Poppins', // Keep if Poppins is installed
 //   },
 //   friendStatus: {
 //     fontSize: 13,
 //     color: theme.textSecondary,
 //     marginTop: 3,
-//     fontFamily: 'Poppins',
+//     // fontFamily: 'Poppins', // Keep if Poppins is installed
 //   },
 //   friendChatBtn: {
 //     backgroundColor: theme.accentColor,
@@ -821,7 +1465,7 @@ export default FriendsScreen;
 //     color: '#fff',
 //     fontWeight: '600',
 //     fontSize: 14,
-//     fontFamily: 'Poppins',
+//     // fontFamily: 'Poppins', // Keep if Poppins is installed
 //   },
 //   nearbyButtonContainer: {
 //     marginTop: 10,
@@ -852,7 +1496,7 @@ export default FriendsScreen;
 //     color: '#fff',
 //     fontSize: 16,
 //     fontWeight: '700',
-//     fontFamily: 'Poppins',
+//     // fontFamily: 'Poppins', // Keep if Poppins is installed
 //     letterSpacing: 0.5,
 //   },
 //   vipDescription: {
@@ -873,9 +1517,28 @@ export default FriendsScreen;
 //     color: '#FFD700',
 //     fontSize: 12,
 //     fontWeight: '500',
-//     fontFamily: 'Poppins',
+//     // fontFamily: 'Poppins', // Keep if Poppins is installed
 //     textAlign: 'center',
 //   },
+//   // --- New styles for Loading state ---
+//   loadingContainer: {
+//     flex: 1,
+//     justifyContent: 'center',
+//     alignItems: 'center',
+//   },
+//   loadingText: {
+//     color: theme.textPrimary,
+//     marginTop: 10,
+//     fontSize: 16,
+//   },
+//   emptyListText: {
+//     color: theme.textSecondary,
+//     textAlign: 'center',
+//     paddingVertical: 20,
+//     fontStyle: 'italic',
+//   }
 // });
 
 // export default FriendsScreen;
+
+
